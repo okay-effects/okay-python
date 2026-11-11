@@ -8,7 +8,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar, cast
 
-from okay_effects.core import Cap, Eff, Op, Unhandled
+from okay_effects.core import Cap, Data, Eff, Op, Prog, Unhandled
+from okay_effects.machine import Asked, step
 
 T = TypeVar("T")
 A = TypeVar("A")
@@ -24,43 +25,40 @@ class Await(Op[T], Generic[T]):
 Async = Cap[Await[Any]]
 
 
-def wait(cap: Async, aw: Awaitable[T]) -> Eff[T]:
+def wait(cap: Async, aw: Awaitable[T]) -> Data[T]:
     """``x = yield from wait(io, fetch())``"""
-    return (yield from cap.perform(Await(aw)))
+    return cap.perform(Await(aw))
 
 
-def sleep(cap: Async, seconds: float) -> Eff[None]:
-    yield from cap.perform(Await(asyncio.sleep(seconds)))
+def sleep(cap: Async, seconds: float) -> Data[None]:
+    return wait(cap, asyncio.sleep(seconds))
 
 
-async def run_async(body: Callable[[Async], Eff[A]]) -> A:
+async def run_async(body: Callable[[Async], Eff[A] | Prog[A]]) -> A:
     """Run body on the event loop, its Awaits awaited; cancelled, its ``finally`` blocks run.
     Every other operation must be handled inside body."""
     cap: Async = Cap(Await)
-    gen = body(cap)
-    send: Any = None
-    throw: BaseException | None = None
     try:
-        while True:
+        s = step(body(cap))
+        while isinstance(s, Asked):
+            if s.cap is not cap:
+                s.cancel()
+                raise Unhandled(f"{type(s.op).__name__}: a branch answers only its own handlers and Await")
             try:
-                t = gen.send(send) if throw is None else gen.throw(throw)
-            except StopIteration as done:
-                return cast(A, done.value)
-            send, throw = None, None
-            if t.cap is not cap:
-                raise Unhandled(f"{type(t.op).__name__}: a branch answers only its own handlers and Await")
-            try:
-                send = await cast(Await[Any], t.op).awaitable
-            except asyncio.CancelledError:
-                raise
+                v = await cast(Await[Any], s.op).awaitable
             except Exception as e:
-                throw = e
+                s = s.fail(e)
+            except BaseException:  # cancelled
+                s.cancel()
+                raise
+            else:
+                s = s.resume(v)
+        return s.value
     finally:
         cap.live = False
-        gen.close()
 
 
-def all_of(cap: Async, *branches: Callable[[Async], Eff[A]]) -> Eff[list[A]]:
+def all_of(cap: Async, *branches: Callable[[Async], Eff[A] | Prog[A]]) -> Data[list[A]]:
     """Branches at once; a failure in one cancels the others and is raised here."""
 
     async def together() -> list[A]:
@@ -71,10 +69,10 @@ def all_of(cap: Async, *branches: Callable[[Async], Eff[A]]) -> Eff[list[A]]:
             raise eg.exceptions[0] from None  # the branch's own failure, as if it were a call
         return [t.result() for t in tasks]
 
-    return (yield from wait(cap, together()))
+    return wait(cap, together())
 
 
-def race(cap: Async, *branches: Callable[[Async], Eff[A]]) -> Eff[A]:
+def race(cap: Async, *branches: Callable[[Async], Eff[A] | Prog[A]]) -> Data[A]:
     """The first answer wins; the others are cancelled, their ``finally`` blocks run."""
 
     async def first() -> A:
@@ -85,4 +83,4 @@ def race(cap: Async, *branches: Callable[[Async], Eff[A]]) -> Eff[A]:
         await asyncio.gather(*pending, return_exceptions=True)
         return next(iter(done)).result()
 
-    return (yield from wait(cap, first()))
+    return wait(cap, first())
