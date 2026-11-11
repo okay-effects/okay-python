@@ -97,13 +97,12 @@ class Rest:
         return Resume(self, answer)
 
 
-def relay(rest: Rest, below: Frame | None, state: Any) -> Frame:
-    """The frames of ``rest`` laid again above ``below``, its handler holding ``state``."""
-    hand = rest.hand
+def relay(top: Frame, hand: Handled, below: Frame | None, state: Any) -> Frame:
+    """The frames from ``top`` down to ``hand`` laid again above ``below``, ``hand`` holding ``state``."""
     if hand.next is below and hand.state is state:
-        return rest.top  # nothing moved: the frames as they are
+        return top  # nothing moved: the frames as they are
     part = []
-    f: Any = rest.top
+    f: Any = top
     while f is not hand:
         part.append(f)
         f = f.next
@@ -231,7 +230,7 @@ def _loop(mode: int, x: Any, stack: Frame | None) -> Done[Any] | Asked[Any]:
                         unwind(rest.top, rest.hand.next)
                         stack, x = f.next, x.value
                     else:
-                        stack = relay(rest, f.next, rest.hand.state)
+                        stack = relay(rest.top, rest.hand, f.next, rest.hand.state)
                         if type(x) is Raise:
                             mode, x = _FAIL, x.error
                 continue
@@ -280,7 +279,7 @@ def _loop(mode: int, x: Any, stack: Frame | None) -> Done[Any] | Asked[Any]:
                     x = node.answer(x.op)
                 elif t is Stateful:  # answered in place, the new state in the handler's frame
                     answer, state = node.step(f.state, x.op)
-                    stack = relay(Rest(stack, f, once), f.next, state)
+                    stack = relay(stack, f, f.next, state)
                     mode, x = _RETURN, answer
                 else:  # Resuming: the clause is given the rest
                     if once:
@@ -291,7 +290,7 @@ def _loop(mode: int, x: Any, stack: Frame | None) -> Done[Any] | Asked[Any]:
                     stack = f.next
                     x = node.on(x.op, rest)
             elif t is Resume:
-                stack = relay(x.rest, stack, x.rest.hand.state)
+                stack = relay(x.rest.top, x.rest.hand, stack, x.rest.hand.state)
                 mode, x = _RETURN, x.value
             elif t is Handle or t is Stateful or t is Resuming:
                 cap = Cap(x.kind)
