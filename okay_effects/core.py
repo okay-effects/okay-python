@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar, overload
+from typing import Any, Generic, TypeVar, dataclass_transform, overload
 
 R = TypeVar("R")
 A = TypeVar("A")
@@ -94,15 +94,25 @@ class Cap(Generic[O_contra]):
 
 # ---- the data: each a value the machine reads; making one runs nothing
 
+T = TypeVar("T")
 
-@dataclass(frozen=True, eq=False, slots=True)
+
+@dataclass_transform(eq_default=False, frozen_default=True)
+def _node(cls: type[T]) -> type[T]:
+    """A data node: frozen to the type checker, made at the speed of a plain class. A frozen
+    dataclass writes each field through ``object.__setattr__``: some 90 ns more a node, and
+    one is made for every operation and every bind."""
+    return dataclass(eq=False, slots=True)(cls)
+
+
+@_node
 class Pure(Data[A]):
     """A value."""
 
     value: A
 
 
-@dataclass(frozen=True, eq=False, slots=True)
+@_node
 class Ask(Data[R]):
     """An operation on its way to the handler that owns its capability."""
 
@@ -110,7 +120,7 @@ class Ask(Data[R]):
     op: Op[R]
 
 
-@dataclass(frozen=True, eq=False, slots=True)
+@_node
 class Bind(Data[B]):
     """A program, and what follows it: a function of its value."""
 
@@ -118,7 +128,7 @@ class Bind(Data[B]):
     next: Callable[[Any], Any]
 
 
-@dataclass(frozen=True, eq=False, slots=True)
+@_node
 class Handle(Data[A]):
     """A program under a handler whose clause is a program answering the operation.
     ``plain``: the clause is a plain function's value (``answering``), so the machine
@@ -130,7 +140,7 @@ class Handle(Data[A]):
     plain: Callable[[Any], Any] | None = None
 
 
-@dataclass(frozen=True, eq=False, slots=True)
+@_node
 class Stateful(Data[A]):
     """A program under a handler that answers from a state."""
 
@@ -140,7 +150,7 @@ class Stateful(Data[A]):
     body: Callable[[Cap[Any]], Any]
 
 
-@dataclass(frozen=True, eq=False, slots=True)
+@_node
 class Resuming(Data[A]):
     """A program under a handler whose clause is given the rest of the program."""
 
@@ -150,7 +160,7 @@ class Resuming(Data[A]):
     body: Callable[[Cap[Any]], Any]
 
 
-@dataclass(frozen=True, eq=False, slots=True)
+@_node
 class Resume(Data[A]):
     """The rest of a program taken at an operation, given the operation's answer."""
 
