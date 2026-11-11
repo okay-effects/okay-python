@@ -78,6 +78,22 @@ class TestInPlace(unittest.TestCase):
         self.assertEqual(got, [(202, (202, 100)), (203, (203, 100)), (203, (203, 100)), (204, (204, 100))])
         self.assertEqual(told, ["+1", "+1", "+2", "+2", "+1", "+2"])
 
+    def test_a_rest_resumed_again_later_sees_the_state_as_it_was_taken(self) -> None:
+        # the first resumption goes on in the rest's own frames (tail position, nothing copied) and
+        # changes the state there; the rest, kept and resumed after its handler returned, must not see it
+        kept: list[Callable[[Any], Data[Any]]] = []
+
+        def on(op: Among[int], k: Callable[[Any], Data[Any]]) -> Data[Any]:
+            kept.append(k)
+            return k(0)
+
+        def body(c: Cap[Among[int]]) -> Data[tuple[int, int]]:
+            return stateful(Cell, 10, cell, lambda s: c.perform(Among((0, 1))).bind(
+                lambda x: s.perform(Get()).bind(lambda n: s.perform(Put(n + x + 1)))).then(s.perform(Get())))
+
+        got = run(resuming(Among, on, pure, body).bind(lambda first: kept[0](1).map(lambda again: (first, again))))
+        self.assertEqual(got, ((11, 11), (12, 12)))
+
     def test_one_state_through_every_path_when_around_the_choice(self) -> None:
         # the state handler around the choice, an in-place handler of another effect between them
         def p(c: Cap[Among[int]], s: Cap[Cell[Any]], a: Cap[Ask[int]]) -> Data[int]:

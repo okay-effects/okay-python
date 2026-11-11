@@ -5,6 +5,10 @@ made. So a part of it is a value: the rest of a program after an operation — t
 frames from the operation down to its handler — is kept as it is and laid again each
 time it is resumed. Nothing is run again to get there.
 
+One write is allowed, for speed: a state handler's frame takes its new state in place
+while no rest that may be resumed again has been taken since the frame was made (its
+``epoch``); otherwise the frames above it are laid again with the new state.
+
 One kind of frame is not data: a generator waiting for a value. It moves when it is
 resumed and cannot be copied, so a rest that holds one goes on once."""
 
@@ -53,15 +57,22 @@ class Running(Frame):
         return Running(self.gen, next)
 
 
-class Handled(Frame):
-    """A handler around what is above it: its capability, its node, its state."""
+_epoch = 0
+"""Counts the rests taken that may be resumed more than once (``resuming``'s ``k``, a stop
+for the host): a frame made since the last of them is in no such rest."""
 
-    __slots__ = ("cap", "node", "state")
+
+class Handled(Frame):
+    """A handler around what is above it: its capability, its node, its state; ``epoch``
+    when it was made."""
+
+    __slots__ = ("cap", "node", "state", "epoch")
 
     def __init__(self, cap: Cap[Any], node: Any, state: Any, next: Frame | None) -> None:
         self.cap = cap
         self.node = node
         self.state = state
+        self.epoch = _epoch
         self.next = next
 
     def above(self, next: Frame | None) -> Frame:
@@ -178,6 +189,7 @@ _RUN, _RETURN, _FAIL = 0, 1, 2
 def _loop(mode: int, x: Any, stack: Frame | None) -> Done[Any] | Asked[Any]:
     """``x`` is the program to run (_RUN), the value going back to the top frame (_RETURN),
     or the error going down the stack to the nearest generator (_FAIL)."""
+    global _epoch
     while True:
         if mode == _FAIL:
             f: Any = stack
@@ -256,6 +268,7 @@ def _loop(mode: int, x: Any, stack: Frame | None) -> Done[Any] | Asked[Any]:
                 if f is None:
                     if not cap.live:
                         raise Escaped(f"{cap}: used outside its handler, the capability escaped its scope")
+                    _epoch += 1
                     return Asked(cap, x.op, stack)
                 assert stack is not None
                 node = f.node
@@ -279,7 +292,10 @@ def _loop(mode: int, x: Any, stack: Frame | None) -> Done[Any] | Asked[Any]:
                     x = node.answer(x.op)
                 elif t is Stateful:  # answered in place, the new state in the handler's frame
                     answer, state = node.step(f.state, x.op)
-                    stack = relay(stack, f, f.next, state)
+                    if f.epoch == _epoch:  # no rest resumed again holds the frame: written in place
+                        f.state = state
+                    else:
+                        stack = relay(stack, f, f.next, state)
                     mode, x = _RETURN, answer
                 else:  # Resuming: the clause is given the rest
                     if once:
@@ -287,6 +303,7 @@ def _loop(mode: int, x: Any, stack: Frame | None) -> Done[Any] | Asked[Any]:
                             f"okay: {type(x.op).__name__} performed from a generator under a handler that resumes "
                             "many times: a generator's rest goes on once; write that part as data (pure, bind)")
                     rest = Rest(stack, f, False)
+                    _epoch += 1
                     stack = f.next
                     x = node.on(x.op, rest)
             elif t is Resume:
