@@ -7,11 +7,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from okay_effects import Abort, Cap, Eff, Host, Op, Raise, answering, handle, run
+from okay_effects import Abort, Cap, Data, Eff, Host, Op, Raise, answering, handle, pure, run
 
 A = TypeVar("A")
 
-# ---- the services: operations, and their typed faces over a capability
+# ---- the services: operations, and their typed faces over a capability. A face gives the
+# operation as it is: a generator binds it with ``yield from``, a program of data with ``bind``
 
 
 @dataclass(frozen=True)
@@ -41,24 +42,24 @@ class Email(Op[None]):
 class Inventory:
     cap: Cap[Reserve]
 
-    def reserve(self, item: str) -> Eff[bool]:
-        return (yield from self.cap.perform(Reserve(item)))
+    def reserve(self, item: str) -> Data[bool]:
+        return self.cap.perform(Reserve(item))
 
 
 @dataclass(frozen=True)
 class Payments:
     cap: Cap[Charge]
 
-    def charge(self, user: str, cents: int) -> Eff[Receipt]:
-        return (yield from self.cap.perform(Charge(user, cents)))
+    def charge(self, user: str, cents: int) -> Data[Receipt]:
+        return self.cap.perform(Charge(user, cents))
 
 
 @dataclass(frozen=True)
 class Notify:
     cap: Cap[Email]
 
-    def email(self, to: str, text: str) -> Eff[None]:
-        yield from self.cap.perform(Email(to, text))
+    def email(self, to: str, text: str) -> Data[None]:
+        return self.cap.perform(Email(to, text))
 
 
 # ---- the business code: a plain class, its dependencies capabilities, plain Python
@@ -80,6 +81,21 @@ class Shop:
             yield from self.mail.email(user, f"not paid: {r.detail}")
         return r
 
+    def checkout_data(self, user: str, item: str, cents: int) -> Data[Receipt]:
+        """The same checkout as data: what follows each operation is a function of its answer,
+        so a handler may go on from any of them more than once — every outcome in one run."""
+
+        def charge(reserved: bool) -> Data[Receipt]:
+            if not reserved:
+                return pure(Receipt(False, f"{item}: out of stock"))
+            return self.payments.charge(user, cents)
+
+        def tell(r: Receipt) -> Data[Receipt]:
+            text = f"paid, receipt {r.detail}" if r.paid else f"not paid: {r.detail}"
+            return self.mail.email(user, text).then(pure(r))
+
+        return self.inventory.reserve(item).bind(charge).bind(tell)
+
 
 # ---- a database, as an effect: a statement, its rows affected
 
@@ -94,8 +110,8 @@ class Exec(Op[int]):
 class Db:
     cap: Cap[Exec]
 
-    def exec(self, sql: str, *args: Any) -> Eff[int]:
-        return (yield from self.cap.perform(Exec(sql, args)))
+    def exec(self, sql: str, *args: Any) -> Data[int]:
+        return self.cap.perform(Exec(sql, args))
 
 
 def sql(conn: sqlite3.Connection, body: Callable[[Db], Eff[A]]) -> Eff[A]:
@@ -181,8 +197,8 @@ class Post(Op[Response]):
 class Http:
     cap: Cap[Post]
 
-    def post(self, url: str, body: str) -> Eff[Response]:
-        return (yield from self.cap.perform(Post(url, body)))
+    def post(self, url: str, body: str) -> Data[Response]:
+        return self.cap.perform(Post(url, body))
 
 
 def gateway(calls: list[str], body: Callable[[Http], Eff[A]]) -> Eff[A]:

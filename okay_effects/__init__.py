@@ -44,12 +44,13 @@ from okay_effects.middleware import (
     replay,
     with_,
 )
+from okay_effects.paths import all_paths
 from okay_effects import wire
 from okay_effects.par import Async, Await, all_of, race, run_async, sleep, wait
 
 __all__ = [
     "Abort", "Answerer", "Async", "Await", "Cap", "Computation", "Data", "Eff", "Entry", "Escaped", "Host",
-    "Middleware", "OneShot", "Op", "Prog", "Raise", "Routes", "Step", "Unhandled", "all_of", "answering",
+    "Middleware", "OneShot", "Op", "Prog", "Raise", "Routes", "Step", "Unhandled", "all_of", "all_paths", "answering",
     "drive", "handle", "only", "pure", "race", "record", "replay", "resuming", "returning",
     "run", "run_async", "sleep", "start", "stateful", "wait", "wire", "with_",
 ]
