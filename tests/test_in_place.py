@@ -88,8 +88,12 @@ class TestInPlace(unittest.TestCase):
             return k(0)
 
         def body(c: Cap[Among[int]]) -> Data[tuple[int, int]]:
-            return stateful(Cell, 10, cell, lambda s: c.perform(Among((0, 1))).bind(
-                lambda x: s.perform(Get()).bind(lambda n: s.perform(Put(n + x + 1)))).then(s.perform(Get())))
+            def inside(s: Cap[Cell[Any]]) -> Data[int]:
+                return c.perform(Among((0, 1))).bind(
+                    lambda x: s.perform(Get()).bind(lambda n: s.perform(Put(n + x + 1)))).then(s.perform(Get()))
+
+            together: Data[tuple[int, int]] = stateful(Cell, 10, cell, inside)
+            return together
 
         got = run(resuming(Among, on, pure, body).bind(lambda first: kept[0](1).map(lambda again: (first, again))))
         self.assertEqual(got, ((11, 11), (12, 12)))
