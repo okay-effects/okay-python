@@ -261,7 +261,21 @@ def _loop(mode: int, x: Any, stack: Frame | None) -> Done[Any] | Asked[Any]:
                 assert stack is not None
                 node = f.node
                 t = type(node)
-                if t is Handle:  # the clause runs outside its handler, the rest waiting under it
+                if t is Handle and node.plain is not None:
+                    # Answered in place (``answering``): a plain answer resumes the rest once, at once,
+                    # so the rest is not taken — the stack stays as it is and the answer goes back to
+                    # its top: to a generator, straight into the one that asked. This is what the clause
+                    # below does with Pure(a), without the frames; Abort, Raise or a failure take the rest.
+                    try:
+                        a = node.plain(x.op)
+                    except Exception as e:  # as from the clause: the body left, raised outside the handler
+                        stack, mode, x = Answered(Rest(stack, f, once), f.next), _FAIL, e
+                        continue
+                    if type(a) is Abort or type(a) is Raise:
+                        stack, x = Answered(Rest(stack, f, once), f.next), Pure(a)
+                    else:
+                        mode, x = _RETURN, a
+                elif t is Handle:  # the clause runs outside its handler, the rest waiting under it
                     stack = Answered(Rest(stack, f, once), f.next)
                     x = node.answer(x.op)
                 elif t is Stateful:  # answered in place, the new state in the handler's frame

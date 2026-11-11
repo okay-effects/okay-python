@@ -120,11 +120,14 @@ class Bind(Data[B]):
 
 @dataclass(frozen=True, eq=False, slots=True)
 class Handle(Data[A]):
-    """A program under a handler whose clause is a program answering the operation."""
+    """A program under a handler whose clause is a program answering the operation.
+    ``plain``: the clause is a plain function's value (``answering``), so the machine
+    may answer in place, the rest left where it is."""
 
     kind: type[Any]
     answer: Callable[[Any], Any]
     body: Callable[[Cap[Any]], Any]
+    plain: Callable[[Any], Any] | None = None
 
 
 @dataclass(frozen=True, eq=False, slots=True)
@@ -198,7 +201,7 @@ def answering(kind: type[O], f: Callable[[O], Any], body: Callable[[Cap[O]], Dat
 def answering(kind: type[O], f: Callable[[O], Any], body: Callable[[Cap[O]], Eff[A] | Prog[A]]) -> Prog[A]: ...
 def answering(kind: type[O], f: Callable[[O], Any], body: Callable[[Cap[O]], Eff[A] | Prog[A]]) -> Prog[A]:
     """``handle`` for a plain answer: f answers each operation (Answering)."""
-    return Handle(kind, lambda op: Pure(f(op)), body)
+    return Handle(kind, lambda op: Pure(f(op)), body, f)
 
 
 @overload
