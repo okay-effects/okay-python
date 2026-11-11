@@ -180,6 +180,13 @@ from the operation down to its handler, is a value: kept, and laid again each
 time it is resumed. A long program runs in constant stack: a hundred thousand
 binds, nested to the left or to the right.
 
+An answer given in place takes no rest at all: `answering` and `stateful` answer
+at once and the program goes on, so the answer goes straight back to the top of
+the stack as it is — for a generator, into the generator that asked. A `stateful`
+handler writes its new state into its own frame while no rest that may be resumed
+again (a `resuming` handler's `k`) holds that frame; otherwise the frames above it
+are laid again with the new state, as above, and each path keeps its own.
+
 `resuming(kind, on, ret, body)` is the handler that is given the rest: `on(op, k)`
 returns the handler's value as a program and may call `k(answer)` never, once or
 many times; `ret` makes the handler's value of the body's:
