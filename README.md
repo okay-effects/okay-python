@@ -22,8 +22,6 @@ Algebraic effects for Python, **typed**, on generators: the design of
   security, `record` and `replay` — all alike, or one kind its own way.
 - **Async without coloured functions.** The business code stays a generator;
   `run_async` at the top awaits; `all_of` and `race` on asyncio.
-- **Every path.** A handler resuming the rest with each possible answer: every
-  outcome of a checkout in one test.
 - **Over the wire.** An operation crosses as a name and a record — a Scala case
   class's shape; with okay's Python worker, the shop runs in Python while Scala
   handlers answer it.

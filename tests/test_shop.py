@@ -1,11 +1,9 @@
 import sqlite3
 import unittest
 
-from typing import Any
-
-from examples.shop.shop import (Charge, Receipt, Reserve, Shop, card, limit, mailbox, production, stock, table,
+from examples.shop.shop import (Receipt, Shop, card, limit, mailbox, production, stock, table,
                                 test as test_app)
-from okay_effects import Cap, Eff, Op, every_path, run
+from okay_effects import run
 
 
 def database(qty: int) -> sqlite3.Connection:
@@ -52,21 +50,6 @@ class TestShop(unittest.TestCase):
                         stock(db, lambda inv: Shop(inv, pay, mail).checkout("bob", "book", 2000))),
                         lambda op: Receipt(False, "needs approval")))))
         self.assertEqual((got, sent), (Receipt(False, "needs approval"), []))
-
-    def test_every_path_of_a_checkout(self) -> None:
-        from examples.shop.shop import Inventory, Notify, Payments
-
-        # one capability answering every operation of the shop, each with all it could answer
-        def answers(op: Op[Any]) -> list[Any]:
-            if isinstance(op, Charge):
-                return [Receipt(True, "ch"), Receipt(False, "declined")]
-            return [True, False] if isinstance(op, Reserve) else [None]
-
-        def body(cap: Cap[Op[Any]]) -> Eff[Receipt]:
-            return Shop(Inventory(cap), Payments(cap), Notify(cap)).checkout("bob", "book", 2000)
-
-        got = every_path(Op, answers, body)
-        self.assertEqual(got, [Receipt(True, "ch"), Receipt(False, "declined"), Receipt(False, "book: out of stock")])
 
 
 if __name__ == "__main__":

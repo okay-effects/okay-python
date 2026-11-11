@@ -8,7 +8,6 @@ Every snippet is from a test (`python3 -m unittest discover -s tests -t .`).
 4. [The kernel's protocol](#4-the-kernels-protocol)
 5. [Middleware: monitor, log, authorize, record, replay](#5-middleware)
 6. [Async and parallel branches](#6-async-and-parallel-branches)
-7. [Every path](#7-every-path)
 8. [Over the wire, with okay](#8-over-the-wire-with-okay)
 9. [Typing, and what Python cannot do](#9-typing-and-limits)
 
@@ -138,22 +137,6 @@ the others are cancelled, their `finally` blocks run; in `all_of` a failure
 cancels the others and is raised as the branch's own exception. A branch
 answers its own handlers and `Await`; it does not reach the parent's handlers.
 
-## 7. Every path
-
-A generator cannot be copied, so the continuation is one-shot. `every_path`
-re-runs the program with the answers so far replayed, so a handler can resume
-the rest with every possible answer — for a program pure apart from its effects:
-
-```python
-def answers(op: Op[Any]) -> list[Any]:
-    if isinstance(op, Charge):
-        return [Receipt(True, "ch"), Receipt(False, "declined")]
-    return [True, False] if isinstance(op, Reserve) else [None]
-
-every_path(Op, answers, lambda cap: Shop(Inventory(cap), Payments(cap), Notify(cap)).checkout("bob", "book", 2000))
-# [Receipt(True, 'ch'), Receipt(False, 'declined'), Receipt(False, 'book: out of stock')]
-```
-
 ## 8. Over the wire, with okay
 
 `wire.remote(call)` answers every operation over any transport: an operation
@@ -189,8 +172,8 @@ shop.fn[String]("checkout").calling(Py.callbacks(reserve, charge, email))("bob",
 - `mypy --strict` passes on the library, the shop and the tests; the result of
   `yield from cap.perform(op)` is typed by `op`'s `R`.
 - `Cap` is contravariant: a capability for any `Op` serves where a
-  `Cap[Reserve]` is wanted (`every_path`).
+  `Cap[Reserve]` is wanted.
 - Not checked statically: which operations a capability takes (checked at
   runtime by `perform`), and which effects a program needs — Python has no
   rows; a program's effects are its capabilities, its parameters.
-- Continuations are one-shot; `every_path` replays.
+- Continuations are one-shot.
