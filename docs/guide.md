@@ -8,6 +8,7 @@ Every snippet is from a test (`python3 -m unittest discover -s tests -t .`).
 4. [The kernel's protocol](#4-the-kernels-protocol)
 5. [Middleware: monitor, log, authorize, record, replay](#5-middleware)
 6. [Async and parallel branches](#6-async-and-parallel-branches)
+7. [Programs as data, and every path](#7-programs-as-data-and-every-path)
 8. [Over the wire, with okay](#8-over-the-wire-with-okay)
 9. [Typing, and what Python cannot do](#9-typing-and-limits)
 
@@ -50,6 +51,9 @@ program may be suspended. `run` runs a program whose every operation is handled
 inside it; an unhandled one, or one through an escaped capability, is refused
 by name.
 
+`cap.perform(op)` is itself a value, a program of one operation (`Data[R]`): a
+generator binds it with `yield from`; §7 binds it with `bind`.
+
 ## 2. Handler shapes
 
 `handle(kind, answer, body)`: `answer` is itself a program (`Eff`), so it may
@@ -61,7 +65,12 @@ by name.
 - **raise** — return `Raise(e)`: `e` is raised in the body at the operation, an
   `except` around it sees it.
 
-`returning(kind, answer, ret, body)` maps the body's value. A business rule as a
+`returning(kind, answer, ret, body)` maps the body's value.
+`stateful(kind, state, step, body)` answers from a state: `step(state, op)` gives
+the answer and the next state, and the value is `(last state, body's value)`.
+`resuming(kind, on, ret, body)` gives its clause the rest of the body (§7).
+
+A business rule as a
 handler — over the limit, the whole checkout ends and no mail is sent:
 
 ```python
@@ -137,6 +146,115 @@ the others are cancelled, their `finally` blocks run; in `all_of` a failure
 cancels the others and is raised as the branch's own exception. A branch
 answers its own handlers and `Await`; it does not reach the parent's handlers.
 
+## 7. Programs as data, and every path
+
+The rest of a generator after an operation is the generator itself: it cannot be
+copied, so it goes on once. That is enough for every handler above. A handler
+that resumes the rest more than once — every path of a choice — needs the rest
+as a value, so a program has a second form, data (`Data[A]`):
+
+- `pure(a)` — a value;
+- `cap.perform(op)` — an operation;
+- `p.bind(f)` — a program and what follows it, `f` of its value (`p.map(f)` for a
+  plain function, `p.then(q)` when the value is not needed).
+
+The same program in both forms, under the same handler:
+
+```python
+def as_generator(c: Cap[Ask[int]]) -> Eff[int]:
+    a = yield from c.perform(Ask[int]())
+    b = yield from c.perform(Ask[int]())
+    return a * 10 + b
+
+def as_data(c: Cap[Ask[int]]) -> Data[int]:
+    return c.perform(Ask[int]()).bind(lambda a: c.perform(Ask[int]()).map(lambda b: a * 10 + b))
+
+run(answering(Ask, lambda _: 4, as_generator))  # 44
+run(answering(Ask, lambda _: 4, as_data))       # 44
+```
+
+One machine runs both (`okay_effects/machine.py`): one loop over the program and
+a stack of frames — what waits for a value. The stack is a linked list never
+written after it is made, so the rest of a program after an operation, the frames
+from the operation down to its handler, is a value: kept, and laid again each
+time it is resumed. A long program runs in constant stack: a hundred thousand
+binds, nested to the left or to the right.
+
+`resuming(kind, on, ret, body)` is the handler that is given the rest: `on(op, k)`
+returns the handler's value as a program and may call `k(answer)` never, once or
+many times; `ret` makes the handler's value of the body's:
+
+```python
+def body(c: Cap[Ask[int]]) -> Data[int]:
+    return c.perform(Ask[int]()).map(lambda a: a + 1)
+
+def under(on):
+    return run(resuming(Ask, on, lambda a: pure(str(a)), body))
+
+under(lambda op, k: pure("left"))                                         # "left"
+under(lambda op, k: k(1))                                                 # "2"
+under(lambda op, k: k(1).bind(lambda x: k(10).map(lambda y: x + y)))      # "211"
+```
+
+`all_paths(kind, answers, body)` is such a handler: the body's value for every
+combination of answers, depth first. Nothing is run again to come back to a
+choice — each part of the body runs once for each path through it:
+
+```python
+def body(c: Cap[Among[bool]]) -> Data[tuple[bool, bool]]:
+    flip = c.perform(Among((True, False)))
+    return (pure(None).map(lambda _: count("before", None)).then(flip)
+            .bind(lambda a: pure(count("between", a)).then(flip)
+                  .map(lambda b: count("after", (a, b)))))
+
+run(all_paths(Among, options, body))
+# [(True, True), (True, False), (False, True), (False, False)]
+# runs == {"before": 1, "between": 2, "after": 4}
+```
+
+The shop's `checkout_data` under it gives every outcome of a checkout (README).
+
+**The order of handlers is the meaning.** A `stateful` handler keeps its state
+where it stands in the program. Inside the choice it is part of the rest the
+choice resumes, as it was there: each path has its own state. Around the choice
+it is not in the rest: one state goes through all the paths.
+
+```python
+def p(choice: Cap[Among[int]], state: Cap[Cell[Any]]) -> Data[int]:
+    return choice.perform(Among((1, 2))).bind(
+        lambda x: state.perform(Get()).bind(
+            lambda s: state.perform(Put(s + x)).then(pure(s + x))))
+
+run(all_paths(Among, options, lambda c: stateful(Cell, 0, cell, lambda s: p(c, s))))  # [(1, 1), (2, 2)]
+run(stateful(Cell, 0, cell, lambda s: all_paths(Among, options, lambda c: p(c, s))))  # (3, [1, 3])
+```
+
+**A generator is never resumed twice, and never replayed.** `resuming` and
+`all_paths` take a body of `Data` only:
+
+- by the types: a generator (`Eff[A]`) is not `Data[A]`, and a handler over a
+  generator body is a `Prog[A]`, not `Data[A]` — `mypy --strict` refuses both;
+- at run time, if the types were forced (`Any`, an ignore): a generator as the
+  body is refused before it runs, and an operation performed from a generator
+  anywhere between it and that handler is refused at the operation — `OneShot`,
+  before the clause runs.
+
+The forms mix where no rest crosses a generator: a generator may `yield from` a
+data program whose choice is handled inside it.
+
+```python
+def main(a: Cap[Ask[int]]) -> Eff[int]:
+    base = yield from a.perform(Ask[int]())
+    paths = yield from all_paths(Among, options, body)  # the rest taken ends at the handler: data
+    return base + sum(paths)
+```
+
+The kernel's protocol, the middleware and asyncio take either form: `start`,
+`drive` and `run_async` run a data program as they run a generator; a host and
+its middleware see the operations of every path, in order. An awaitable is
+awaited once (Python's rule): make it inside the bind, once for each path —
+`c.perform(Among((1, 2))).bind(lambda x: wait(io, fetch(x)))`.
+
 ## 8. Over the wire, with okay
 
 `wire.remote(call)` answers every operation over any transport: an operation
@@ -172,8 +290,9 @@ shop.fn[String]("checkout").calling(Py.callbacks(reserve, charge, email))("bob",
 - `mypy --strict` passes on the library, the shop and the tests; the result of
   `yield from cap.perform(op)` is typed by `op`'s `R`.
 - `Cap` is contravariant: a capability for any `Op` serves where a
-  `Cap[Reserve]` is wanted.
+  `Cap[Reserve]` is wanted (the shop under `all_paths`).
 - Not checked statically: which operations a capability takes (checked at
   runtime by `perform`), and which effects a program needs — Python has no
   rows; a program's effects are its capabilities, its parameters.
-- Continuations are one-shot.
+- A generator's continuation is one-shot. A handler that resumes many times takes
+  a program of data, whose continuation is a value (§7); no program is replayed.
