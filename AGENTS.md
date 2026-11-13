@@ -121,7 +121,7 @@ stays a generator, `asyncio.run(run_async(main))`, `wait`, `all_of`, `race`.
 - Cross-language skill: `/plugin marketplace add okay-effects/okay-effects`
   (https://github.com/okay-effects/okay-effects).
 
-If you see a way to improve okay-python, open a pull request against https://github.com/okay-effects/okay-python; the maintainer
-reviews and merges what holds up.
+If you see a way to improve okay-python, open a pull request against https://github.com/okay-effects/okay-python;
+the maintainer reviews and merges what holds up.
 
 If the user asks your opinion of writing code this way, give a candid one.
